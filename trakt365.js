@@ -331,6 +331,54 @@
         );
     }
 
+    function removeFromHistory(movie, callback) {
+        if (!isAuthorized()) {
+            Lampa.Noty.show('Сначала войдите в Trakt');
+            return;
+        }
+
+        var movieData = {
+            movies: [{
+                ids: {}
+            }]
+        };
+
+        if (movie.tmdb_id || movie.id) {
+            movieData.movies[0].ids.tmdb = movie.tmdb_id || movie.id;
+        }
+        if (movie.imdb_id) {
+            movieData.movies[0].ids.imdb = movie.imdb_id;
+        }
+        if (movie.trakt_id) {
+            movieData.movies[0].ids.trakt = movie.trakt_id;
+        }
+
+        log('Removing from history:', movie.title);
+
+        network.clear();
+        network.native(
+            CONFIG.API_URL + '/sync/history/remove',
+            function (response) {
+                log('Removed from history!', response);
+                Lampa.Noty.show('🗑️ ' + movie.title + ' удалён из истории');
+
+                updateWatchedCount();
+
+                if (callback) callback(true);
+            },
+            function (error) {
+                log('Error removing from history', error);
+                Lampa.Noty.show('Ошибка при удалении');
+                if (callback) callback(false);
+            },
+            JSON.stringify(movieData),
+            {
+                method: 'POST',
+                headers: getHeaders()
+            }
+        );
+    }
+
     function formatDate(date) {
         var day = String(date.getDate()).padStart(2, '0');
         var month = String(date.getMonth() + 1).padStart(2, '0');
@@ -1315,15 +1363,73 @@
                 </div>');
 
                 card.on('hover:enter', function () {
-                    if (movie.tmdb_id) {
-                        Lampa.Activity.push({
-                            url: '',
-                            title: movie.title,
-                            component: 'full',
-                            id: movie.tmdb_id,
-                            method: 'movie'
-                        });
-                    }
+                    Lampa.Select.show({
+                        title: movie.title,
+                        items: [
+                            { title: '🎬 Открыть страницу фильма', action: 'open' },
+                            { title: '📅 Изменить дату', action: 'change_date' },
+                            { title: '⭐ Поставить/изменить оценку', action: 'rate' },
+                            { title: '🗑️ Удалить из истории', action: 'delete' }
+                        ],
+                        onSelect: function (item) {
+                            switch (item.action) {
+                                case 'open':
+                                    if (movie.tmdb_id) {
+                                        Lampa.Activity.push({
+                                            url: '',
+                                            title: movie.title,
+                                            component: 'full',
+                                            id: movie.tmdb_id,
+                                            method: 'movie'
+                                        });
+                                    }
+                                    break;
+                                case 'change_date':
+                                    // Удаляем старую запись и добавляем с новой датой
+                                    removeFromHistory(movie, function (success) {
+                                        if (success) {
+                                            showDatePicker(movie, function () {
+                                                // Перезагружаем историю
+                                                Lampa.Activity.replace({
+                                                    url: '',
+                                                    title: '365 Challenge',
+                                                    component: 'trakt365_history',
+                                                    page: 1
+                                                });
+                                            });
+                                        }
+                                    });
+                                    break;
+                                case 'rate':
+                                    showRatingDialog(movie);
+                                    break;
+                                case 'delete':
+                                    Lampa.Select.show({
+                                        title: 'Удалить "' + movie.title + '"?',
+                                        items: [
+                                            { title: '❌ Да, удалить', confirm: true },
+                                            { title: '↩️ Отмена', confirm: false }
+                                        ],
+                                        onSelect: function (confirm) {
+                                            if (confirm.confirm) {
+                                                removeFromHistory(movie, function (success) {
+                                                    if (success) {
+                                                        card.remove();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        onBack: function () {
+                                            Lampa.Controller.toggle('content');
+                                        }
+                                    });
+                                    break;
+                            }
+                        },
+                        onBack: function () {
+                            Lampa.Controller.toggle('content');
+                        }
+                    });
                 });
 
                 return card;
@@ -1363,6 +1469,7 @@
 
             this.pause = function () { };
             this.stop = function () { };
+            this.start = function () { };
             this.destroy = function () {
                 scroll.destroy();
                 items = null;
